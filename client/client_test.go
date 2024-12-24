@@ -19,7 +19,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -229,14 +228,20 @@ func TestIntegration(t *testing.T) {
 }
 
 func testIntegration(t *testing.T, funcs ...func(t *testing.T, sb integration.Sandbox)) {
-	mirroredImages := integration.OfficialImages("busybox:latest", "alpine:latest")
-	mirroredImages["tonistiigi/test:nolayers"] = "docker.io/tonistiigi/test:nolayers"
-	mirroredImages["cpuguy83/buildkit-foreign:latest"] = "docker.io/cpuguy83/buildkit-foreign:latest"
+	mirroredImagesUnix := integration.OfficialImages("busybox:latest", "alpine:latest")
+	mirroredImagesUnix["tonistiigi/test:nolayers"] = "docker.io/tonistiigi/test:nolayers"
+	mirroredImagesUnix["cpuguy83/buildkit-foreign:latest"] = "docker.io/cpuguy83/buildkit-foreign:latest"
+	mirroredImagesWin := integration.OfficialImages("nanoserver:latest", "nanoserver:plus")
+
+	mirroredImages := integration.UnixOrWindows(mirroredImagesUnix, mirroredImagesWin)
 	mirrors := integration.WithMirroredImages(mirroredImages)
 
 	tests := integration.TestFuncs(funcs...)
 	tests = append(tests, diffOpTestCases()...)
 	integration.Run(t, tests, mirrors)
+
+	// the rest of the tests are meant for non-Windows, skipping on Windows.
+	integration.SkipOnPlatform(t, "windows")
 
 	integration.Run(t, integration.TestFuncs(
 		testSecurityMode,
@@ -260,16 +265,14 @@ func testIntegration(t *testing.T, funcs ...func(t *testing.T, sb integration.Sa
 		}),
 	)
 
-	if runtime.GOOS != "windows" {
-		integration.Run(
-			t,
-			integration.TestFuncs(testBridgeNetworkingDNSNoRootless),
-			mirrors,
-			integration.WithMatrix("netmode", map[string]interface{}{
-				"dns": bridgeDNSNetwork,
-			}),
-		)
-	}
+	integration.Run(
+		t,
+		integration.TestFuncs(testBridgeNetworkingDNSNoRootless),
+		mirrors,
+		integration.WithMatrix("netmode", map[string]interface{}{
+			"dns": bridgeDNSNetwork,
+		}),
+	)
 }
 
 func newContainerd(cdAddress string) (*containerd.Client, error) {
@@ -414,7 +417,6 @@ func testHostNetworking(t *testing.T, sb integration.Sandbox) {
 }
 
 func testExportedImageLabels(t *testing.T, sb integration.Sandbox) {
-	integration.SkipOnPlatform(t, "windows")
 	c, err := New(sb.Context(), sb.Address())
 	require.NoError(t, err)
 	defer c.Close()
@@ -426,7 +428,14 @@ func testExportedImageLabels(t *testing.T, sb integration.Sandbox) {
 
 	ctx := sb.Context()
 
-	def, err := llb.Image("busybox").Run(llb.Shlexf("echo foo > /foo")).Marshal(ctx)
+	imgName := integration.UnixOrWindows("busybox", "nanoserver")
+	prefix := integration.UnixOrWindows(
+		"",
+		"cmd /C ", // TODO(profnandaa): currently needs the shell prefix, to be fixed
+	)
+	def, err := llb.Image(imgName).
+		Run(llb.Shlexf(fmt.Sprintf("%secho foo > /foo", prefix))).
+		Marshal(ctx)
 	require.NoError(t, err)
 
 	target := "docker.io/buildkit/build/exporter:labels"
@@ -7766,9 +7775,7 @@ func chainRunShells(base llb.State, cmdss ...[]string) llb.State {
 }
 
 func requiresLinux(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skipf("unsupported GOOS: %s", runtime.GOOS)
-	}
+	integration.SkipOnPlatform(t, "!linux")
 }
 
 // ensurePruneAll tries to ensure Prune completes with retries.
@@ -7837,6 +7844,16 @@ loop0:
 	// examine contents of exported tars (requires containerd)
 	cdAddress := sb.ContainerdAddress()
 	if cdAddress == "" {
+		if checkContent {
+			store := proxy.NewContentStore(c.ContentClient())
+			count := 0
+			err := store.Walk(sb.Context(), func(info content.Info) error {
+				count++
+				return nil
+			})
+			require.NoError(t, err)
+			require.Equal(t, 0, count)
+		}
 		t.Logf("checkAllReleasable: skipping check for exported tars in non-containerd test")
 		return
 	}
@@ -7847,60 +7864,85 @@ loop0:
 	require.NoError(t, err)
 	defer client.Close()
 
-	ctx := namespaces.WithNamespace(sb.Context(), "buildkit")
-	snapshotterName := sb.Snapshotter()
-	snapshotService := client.SnapshotService(snapshotterName)
+	for _, ns := range []string{"buildkit", "buildkit_history"} {
+		ctx := namespaces.WithNamespace(sb.Context(), ns)
+		snapshotterName := sb.Snapshotter()
+		snapshotService := client.SnapshotService(snapshotterName)
 
-	retries = 0
-	for {
-		count := 0
-		err = snapshotService.Walk(ctx, func(context.Context, snapshots.Info) error {
-			count++
-			return nil
-		})
+		leases, err := client.LeasesService().List(ctx)
 		require.NoError(t, err)
-		if count == 0 {
-			break
-		}
-		require.Less(t, retries, 20)
-		retries++
-		time.Sleep(500 * time.Millisecond)
-	}
-
-	if !checkContent {
-		return
-	}
-
-	retries = 0
-	for {
 		count := 0
-		var infos []content.Info
-		err = client.ContentStore().Walk(ctx, func(info content.Info) error {
-			count++
-			infos = append(infos, info)
-			return nil
-		})
-		require.NoError(t, err)
-		if count == 0 {
-			break
-		}
-		if retries >= 50 {
-			for _, info := range infos {
-				t.Logf("content: %v %v %+v", info.Digest, info.Size, info.Labels)
-				ra, err := client.ContentStore().ReaderAt(ctx, ocispecs.Descriptor{
-					Digest: info.Digest,
-					Size:   info.Size,
-				})
-				if err == nil {
-					dt := make([]byte, 1024)
-					n, err := ra.ReadAt(dt, 0)
-					t.Logf("data: %+v %q", err, string(dt[:n]))
-				}
+		for _, l := range leases {
+			_, isTemp := l.Labels["buildkit/lease.temporary"]
+			_, isExpire := l.Labels["containerd.io/gc.expire"]
+			if isTemp && isExpire {
+				continue
 			}
-			require.FailNowf(t, "content still exists", "%+v", infos)
+			count++
+			t.Logf("lease: %v", l)
 		}
-		retries++
-		time.Sleep(500 * time.Millisecond)
+		require.Equal(t, 0, count)
+
+		if checkContent {
+			images, err := client.ImageService().List(ctx)
+			require.NoError(t, err)
+			for _, img := range images {
+				err := client.ImageService().Delete(ctx, img.Name)
+				require.NoError(t, err)
+			}
+		}
+
+		retries = 0
+		for {
+			count := 0
+			err = snapshotService.Walk(ctx, func(context.Context, snapshots.Info) error {
+				count++
+				return nil
+			})
+			require.NoError(t, err)
+			if count == 0 {
+				break
+			}
+			require.Less(t, retries, 20)
+			retries++
+			time.Sleep(500 * time.Millisecond)
+		}
+
+		if !checkContent {
+			return
+		}
+
+		retries = 0
+		for {
+			count := 0
+			var infos []content.Info
+			err = client.ContentStore().Walk(ctx, func(info content.Info) error {
+				count++
+				infos = append(infos, info)
+				return nil
+			})
+			require.NoError(t, err)
+			if count == 0 {
+				break
+			}
+			if retries >= 50 {
+				for _, info := range infos {
+					t.Logf("content: %v %v %+v", info.Digest, info.Size, info.Labels)
+					ra, err := client.ContentStore().ReaderAt(ctx, ocispecs.Descriptor{
+						Digest: info.Digest,
+						Size:   info.Size,
+					})
+					if err == nil {
+						dt := make([]byte, 1024)
+						n, err := ra.ReadAt(dt, 0)
+						t.Logf("data: %+v %q", err, string(dt[:n]))
+					}
+				}
+				require.FailNowf(t, "content still exists", "%+v", infos)
+			}
+			retries++
+			time.Sleep(500 * time.Millisecond)
+		}
 	}
 }
 
@@ -7976,7 +8018,7 @@ func testInvalidExporter(t *testing.T, sb integration.Sandbox) {
 func testParallelLocalBuilds(t *testing.T, sb integration.Sandbox) {
 	integration.SkipOnPlatform(t, "windows")
 	ctx, cancel := context.WithCancelCause(sb.Context())
-	defer cancel(errors.WithStack(context.Canceled))
+	defer func() { cancel(errors.WithStack(context.Canceled)) }()
 
 	c, err := New(ctx, sb.Address())
 	require.NoError(t, err)
@@ -9872,6 +9914,8 @@ func testSBOMSupplements(t *testing.T, sb integration.Sandbox) {
 	require.Regexp(t, "^layerID: sha256:", attest.Predicate.Files[0].FileComment)
 	require.Equal(t, "/bar", attest.Predicate.Files[1].FileName)
 	require.Empty(t, attest.Predicate.Files[1].FileComment)
+
+	checkAllReleasable(t, c, sb, true)
 }
 
 func testMultipleCacheExports(t *testing.T, sb integration.Sandbox) {

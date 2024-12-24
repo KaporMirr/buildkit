@@ -70,6 +70,8 @@ type Opt struct {
 	LeaseManager              *leaseutil.Manager
 	ContentStore              *containerdsnapshot.Store
 	HistoryConfig             *config.HistoryConfig
+	GarbageCollect            func(context.Context) error
+	GracefulStop              <-chan struct{}
 }
 
 type Controller struct { // TODO: ControlService
@@ -89,10 +91,12 @@ func NewController(opt Opt) (*Controller, error) {
 	gatewayForwarder := controlgateway.NewGatewayForwarder()
 
 	hq, err := llbsolver.NewHistoryQueue(llbsolver.HistoryQueueOpt{
-		DB:           opt.HistoryDB,
-		LeaseManager: opt.LeaseManager,
-		ContentStore: opt.ContentStore,
-		CleanConfig:  opt.HistoryConfig,
+		DB:             opt.HistoryDB,
+		LeaseManager:   opt.LeaseManager,
+		ContentStore:   opt.ContentStore,
+		CleanConfig:    opt.HistoryConfig,
+		GarbageCollect: opt.GarbageCollect,
+		GracefulStop:   opt.GracefulStop,
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create history queue")

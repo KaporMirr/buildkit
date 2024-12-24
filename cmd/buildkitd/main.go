@@ -233,7 +233,7 @@ func main() {
 			return errors.New("rootless mode requires to be executed as the mapped root in a user namespace; you may use RootlessKit for setting up the namespace")
 		}
 		ctx, cancel := context.WithCancelCause(appcontext.Context())
-		defer cancel(errors.WithStack(context.Canceled))
+		defer func() { cancel(errors.WithStack(context.Canceled)) }()
 
 		cfg, err := config.LoadFile(c.GlobalString("config"))
 		if err != nil {
@@ -341,7 +341,7 @@ func main() {
 			return err
 		}
 
-		controller, err := newController(c, &cfg)
+		controller, err := newController(ctx, c, &cfg)
 		if err != nil {
 			return err
 		}
@@ -758,7 +758,7 @@ func serverCredentials(cfg config.TLSConfig) (*tls.Config, error) {
 	return tlsConf, nil
 }
 
-func newController(c *cli.Context, cfg *config.Config) (*control.Controller, error) {
+func newController(ctx context.Context, c *cli.Context, cfg *config.Config) (*control.Controller, error) {
 	sessionManager, err := session.NewManager()
 	if err != nil {
 		return nil, err
@@ -850,6 +850,8 @@ func newController(c *cli.Context, cfg *config.Config) (*control.Controller, err
 		LeaseManager:              w.LeaseManager(),
 		ContentStore:              w.ContentStore(),
 		HistoryConfig:             cfg.History,
+		GarbageCollect:            w.GarbageCollect,
+		GracefulStop:              ctx.Done(),
 	})
 }
 
