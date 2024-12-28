@@ -1,11 +1,9 @@
-[![asciicinema example](https://asciinema.org/a/gPEIEo1NzmDTUu2bEPsUboqmU.png)](https://asciinema.org/a/gPEIEo1NzmDTUu2bEPsUboqmU)
+[![asciicinema example](https://.org/a/gPEIEo1NzmDTUu2bEPsUboqmU.png)](https://asciinema.org/a/gPEIEo1NzmDTUu2bEPsUboqmU)
 
 # BuildKit
 
 [![GoDoc](https://godoc.org/github.com/moby/buildkit?status.svg)](https://godoc.org/github.com/moby/buildkit/client/llb)
-[![Build Status](https://travis-ci.org/moby/buildkit.svg?branch=master)](https://travis-ci.org/moby/buildkit)
-[![Go Report Card](https://goreportcard.com/badge/github.com/moby/buildkit)](https://goreportcard.com/report/github.com/moby/buildkit)
-
+[![Build Status](https://travis-ci.org/moby/buildkit.svg?branch=master)](
 BuildKit is a toolkit for converting source code to build artifacts in an efficient, expressive and repeatable manner.
 
 Key features:
@@ -21,64 +19,16 @@ Key features:
 -   Pluggable architecture
 -   Execution without root privileges
 
-Read the proposal from https://github.com/moby/moby/issues/32925
+Read the proposal from https://github.com/moby/moby/issue
+ile/docs/experi](frontend/dockerfile/docs/experimental.md).
 
-Introductory blog post https://blog.mobyproject.org/introducing-buildkit-17e056cc5317
+:information_source: [BuildKit has been integrated to `docker build` since
 
-Join `#buildkit` channel on [Docker Community Slack](http://dockr.ly/slack)
+<!-- END doctoc generated TOC please keep comment here to allow auto update Used by
 
-:information_source: If you are visiting this repo for the usage of experimental Dockerfile features like `RUN --mount=type=(bind|cache|tmpfs|secret|ssh)`, please refer to [`frontend/dockerfile/docs/experimental.md`](frontend/dockerfile/docs/experimental.md).
-
-:information_source: [BuildKit has been integrated to `docker build` since Docker 18.06 .](https://docs.docker.com/develop/develop-images/build_enhancements/)
-You don't need to read this document unless you want to use the full-featured standalone version of BuildKit.
-
-<!-- START doctoc generated TOC please keep comment here to allow auto update -->
-<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
-
-
-- [Used by](#used-by)
-- [Quick start](#quick-start)
-  - [Starting the `buildkitd` daemon:](#starting-the-buildkitd-daemon)
-  - [Exploring LLB](#exploring-llb)
-  - [Exploring Dockerfiles](#exploring-dockerfiles)
-    - [Building a Dockerfile with `buildctl`](#building-a-dockerfile-with-buildctl)
-    - [Building a Dockerfile using external frontend:](#building-a-dockerfile-using-external-frontend)
-    - [Building a Dockerfile with experimental features like `RUN --mount=type=(bind|cache|tmpfs|secret|ssh)`](#building-a-dockerfile-with-experimental-features-like-run---mounttypebindcachetmpfssecretssh)
-  - [Output](#output)
-    - [Image/Registry](#imageregistry)
-    - [Local directory](#local-directory)
-    - [Docker tarball](#docker-tarball)
-    - [OCI tarball](#oci-tarball)
-    - [containerd image store](#containerd-image-store)
-- [Cache](#cache)
-  - [Garbage collection](#garbage-collection)
-  - [Export cache](#export-cache)
-    - [Inline (push image and cache together)](#inline-push-image-and-cache-together)
-    - [Registry (push image and cache separately)](#registry-push-image-and-cache-separately)
-    - [Local directory](#local-directory-1)
-    - [`--export-cache` options](#--export-cache-options)
-    - [`--import-cache` options](#--import-cache-options)
-  - [Consistent hashing](#consistent-hashing)
-- [Expose BuildKit as a TCP service](#expose-buildkit-as-a-tcp-service)
-  - [Load balancing](#load-balancing)
-- [Containerizing BuildKit](#containerizing-buildkit)
-  - [Kubernetes](#kubernetes)
-  - [Daemonless](#daemonless)
-- [Opentracing support](#opentracing-support)
-- [Running BuildKit without root privileges](#running-buildkit-without-root-privileges)
-- [Building multi-platform images](#building-multi-platform-images)
-- [Contributing](#contributing)
-
-<!-- END doctoc generated TOC please keep comment here to allow auto update -->
-
-## Used by
-
-BuildKit is used by the following projects:
-
--   [Moby & Docker](https://github.com/moby/moby/pull/37151) (`DOCKER_BUILDKIT=1 docker build`)
+BuildKit is used by the following proje
 -   [img](https://github.com/genuinetools/img)
--   [OpenFaaS Cloud](https://github.com/openfaas/openfaas-cloud)
--   [container build interface](https://github.com/containerbuilding/cbi)
+-   [OpenFaaS Cloud](https://github.com/openfaas/openfaas-clo
 -   [Tekton Pipelines](https://github.com/tektoncd/catalog) (formerly [Knative Build Templates](https://github.com/knative/build-templates))
 -   [the Sanic build tool](https://github.com/distributed-containers-inc/sanic)
 -   [vab](https://github.com/stellarproject/vab)
@@ -89,65 +39,18 @@ BuildKit is used by the following projects:
 
 ## Quick start
 
-:information_source: For Kubernetes deployments, see [`examples/kubernetes`](./examples/kubernetes).
-
-BuildKit is composed of the `buildkitd` daemon and the `buildctl` client.
-While the `buildctl` client is available for Linux, macOS, and Windows, the `buildkitd` daemon is only available for Linux currently.
-
-The `buildkitd` daemon requires the following components to be installed:
--   [runc](https://github.com/opencontainers/runc) or [crun](https://github.com/containers/crun)
--   [containerd](https://github.com/containerd/containerd) (if you want to use containerd worker)
-
-The latest binaries of BuildKit are available [here](https://github.com/moby/buildkit/releases) for Linux, macOS, and Windows.
-
-[Homebrew package](https://formulae.brew.sh/formula/buildkit) (unofficial) is available for macOS.
-```console
-$ brew install buildkit
-```
-
-To build BuildKit from source, see [`.github/CONTRIBUTING.md`](./.github/CONTRIBUTING.md).
-
-### Starting the `buildkitd` daemon:
-
-You need to run `buildkitd` as the root user on the host.
-
-```bash
-$ sudo buildkitd
-```
-
-To run `buildkitd` as a non-root user, see [`docs/rootless.md`](docs/rootless.md).
-
-The buildkitd daemon supports two worker backends: OCI (runc) and containerd.
-
-By default, the OCI (runc) worker is used. You can set `--oci-worker=false --containerd-worker=true` to use the containerd worker.
-
-We are open to adding more backends.
-
-The buildkitd daemon listens gRPC API on `/run/buildkit/buildkitd.sock` by default, but you can also use TCP sockets.
-See [Expose BuildKit as a TCP service](#expose-buildkit-as-a-tcp-service).
+:information_source: For Kubernetes deployments, see [`examples/kubernetes`](./examples/kubernetSee [Expose BuildKit](#expose-buildkit-as-a-tcp-service).
 
 :information_source: Notice to Fedora 31 users:
 
-* As runc still does not work on cgroup v2 environment like Fedora 31, you need to substitute runc with crun. Run `buildkitd` with `--oci-worker-binary=crun`.
-* If you want to use runc, you need to configure the system to use cgroup v1. Run `sudo grubby --update-kernel=ALL --args="systemd.unified_cgroup_hierarchy=0"` and reboot.
-
-### Exploring LLB
-
-BuildKit builds are based on a binary intermediate format called LLB that is used for defining the dependency graph for processes running part of your build. tl;dr: LLB is to Dockerfile what LLVM IR is to C.
+* As runc still does not work on cgroup like Fedora 31, you need to substitute runc with crun. Run `buildkitd`  `--oci-work
 
 -   Marshaled as Protobuf messages
--   Concurrently executable
--   Efficiently cacheable
--   Vendor-neutral (i.e. non-Dockerfile languages can be easily implemented)
+-   Concurrently 
 
-See [`solver/pb/ops.proto`](./solver/pb/ops.proto) for the format definition, and see [`./examples/README.md`](./examples/README.md) for example LLB applications.
+-   Dockerfile (See [Exploring Dockerfiles](#exploring-
 
-Currently, the following high-level languages has been implemented for LLB:
-
--   Dockerfile (See [Exploring Dockerfiles](#exploring-dockerfiles))
--   [Buildpacks](https://github.com/tonistiigi/buildkit-pack)
--   [Mockerfile](https://matt-rickard.com/building-a-new-dockerfile-frontend/)
--   [Gockerfile](https://github.com/po3rin/gockerfile)
+-   [Gockerfi)
 -   (open a PR to add your own language)
 
 ### Exploring Dockerfiles
@@ -156,56 +59,13 @@ Frontends are components that run inside BuildKit and convert any build definiti
 
 During development, Dockerfile frontend (`dockerfile.v0`) is also part of the BuildKit repo. In the future, this will be moved out, and Dockerfiles can be built using an external image.
 
-#### Building a Dockerfile with `buildctl`
-
-```bash
-buildctl build \
-    --frontend=dockerfile.v0 \
-    --local context=. \
-    --local dockerfile=.
-# or
-buildctl build \
-    --frontend=dockerfile.v0 \
-    --local context=. \
-    --local dockerfile=. \
-    --opt target=foo \
-    --opt build-arg:foo=bar
 ```
+    --=dockerfile.v0 \
+    --local context
 
-`--local` exposes local source files from client to the builder. `context` and `dockerfile` are the names Dockerfile frontend looks for build context and Dockerfile location.
 
-#### Building a Dockerfile using external frontend:
 
-External versions of the Dockerfile frontend are pushed to https://hub.docker.com/r/docker/dockerfile-upstream and https://hub.docker.com/r/docker/dockerfile and can be used with the gateway frontend. The source for the external frontend is currently located in `./frontend/dockerfile/cmd/dockerfile-frontend` but will move out of this repository in the future ([#163](https://github.com/moby/buildkit/issues/163)). For automatic build from master branch of this repository `docker/dockerfile-upsteam:master` or `docker/dockerfile-upstream:master-experimental` image can be used.
-
-```bash
-buildctl build \
-    --frontend gateway.v0 \
-    --opt source=docker/dockerfile \
-    --local context=. \
-    --local dockerfile=.
-buildctl build \
-    --frontend gateway.v0 \
-    --opt source=docker/dockerfile \
-    --opt context=git://github.com/moby/moby \
-    --opt build-arg:APT_MIRROR=cdn-fastly.deb.debian.org
 ```
-
-#### Building a Dockerfile with experimental features like `RUN --mount=type=(bind|cache|tmpfs|secret|ssh)`
-
-See [`frontend/dockerfile/docs/experimental.md`](frontend/dockerfile/docs/experimental.md).
-
-### Output
-
-By default, the build result and intermediate cache will only remain internally in BuildKit. An output needs to be specified to retrieve the result.
-
-#### Image/Registry
-
-```bash
-buildctl build ... --output type=image,name=docker.io/username/image,push=true
-```
-
-To export the cache embed with the image and pushing them to registry together, type `registry` is required to import the cache, you should specify `--export-cache type=inline` and `--import-cache type=registry,ref=...`. To export the cache to a local directy, you should specify `--export-cache type=local`.
 Details in [Export cache](#export-cache).
 
 ```bash
